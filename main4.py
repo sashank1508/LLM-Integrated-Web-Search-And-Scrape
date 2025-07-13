@@ -14,9 +14,14 @@ from dataclasses import dataclass
 from collections import defaultdict
 from pathlib import Path
 from datetime import datetime
+import concurrent.futures
+from functools import partial
+import random
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.getLogger("aiohttp").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger("WebScraperAI")
 
 @dataclass
@@ -37,15 +42,15 @@ class AnalysisResult:
     confidence: float = 0.0
     source_url: str = ""
 
-class EnhancedWebScraperAI:
-    def __init__(self, max_depth: int = 5, max_concurrent_requests: int = 3, request_delay: float = 1.0):
+class ProductionWebScraperAI:
+    def __init__(self, max_depth: int = 4, max_concurrent_requests: int = 3, request_delay: float = 0.8):
         """
-        Initialize the Enhanced WebScraperAI with optimization parameters
+        WebScraperAI - Optimized for reliability and rate limit compliance
         
         Args:
             max_depth: Maximum depth to follow next URLs
-            max_concurrent_requests: Maximum concurrent HTTP requests
-            request_delay: Delay between requests in seconds
+            max_concurrent_requests: Conservative concurrent requests to avoid rate limits
+            request_delay: Longer delay to respect rate limits
         """
         self.openai_api_key = self._get_openai_key()
         self.client = AsyncOpenAI(api_key=self.openai_api_key)
@@ -59,6 +64,35 @@ class EnhancedWebScraperAI:
         self.url_depth_map: dict = {}
         self.semaphore = asyncio.Semaphore(max_concurrent_requests)
         
+        # Rate limiting awareness
+        self.rate_limited_domains: Set[str] = set()
+        self.request_count = 0
+        self.last_request_time = 0
+        
+        # Store current URL for relative resolution
+        self._current_base_url = None
+        
+        # Pre-compiled regex patterns
+        self.url_patterns = [
+            re.compile(r'https?://[^\s<>"]+'),
+            re.compile(r'www\.[^\s<>"]+'),
+            re.compile(r'[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:/[^\s<>"]*)?')
+        ]
+        
+        # Session for synchronous requests
+        self.sync_session = requests.Session()
+        self.sync_session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Connection': 'keep-alive',
+        })
+        
+    def __del__(self):
+        """Cleanup session"""
+        if hasattr(self, 'sync_session'):
+            self.sync_session.close()
+        
     def _get_openai_key(self) -> str:
         """Get OpenAI API key from environment variables"""
         api_key = os.environ.get('OPENAI_API_KEY')
@@ -70,70 +104,144 @@ class EnhancedWebScraperAI:
         return api_key
 
     def _normalize_url(self, url: str, base_url: Optional[str] = None) -> Optional[str]:
-        """Normalize URL and handle relative URLs"""
-        if not url or url.lower() == 'none':
+        """Enhanced URL normalization with better relative URL handling"""
+        if not url or url.lower() in ['none', 'null']:
             return None
             
         url = url.strip()
         
-        # Handle relative URLs
+        # Use stored base URL if none provided
+        if not base_url and hasattr(self, '_current_base_url'):
+            base_url = self._current_base_url
+        
+        # Handle relative URLs more intelligently
         if base_url and not url.startswith(('http://', 'https://')):
-            url = urljoin(base_url, url)
+            # If it's a relative URL, use urljoin properly
+            if url.startswith('/'):
+                # Absolute path relative to domain
+                parsed_base = urlparse(base_url)
+                url = f"{parsed_base.scheme}://{parsed_base.netloc}{url}"
+            else:
+                # Relative path
+                url = urljoin(base_url, url)
         
         # Ensure https if no protocol
         if not url.startswith(('http://', 'https://')):
             url = 'https://' + url
             
+        # Clean up URL
+        url = url.replace(' ', '%20')
+        
+        # Remove fragments and clean up
+        if '#' in url:
+            url = url.split('#')[0]
+        
+        logger.debug(f"Normalized URL: {url}")
         return url
 
     def _is_valid_url(self, url: Optional[str]) -> bool:
-        """Check if URL is valid and not in failed URLs"""
-        if not url or url.lower() == 'none':
+        """Rate-limit aware URL validation"""
+        if not url or url.lower() in ['none', 'null']:
             return False
             
         if url in self.failed_urls:
+            logger.debug(f"URL in failed list: {url}")
+            return False
+        
+        # Check if domain is rate limited
+        try:
+            domain = urlparse(url).netloc.lower()
+            if domain in self.rate_limited_domains:
+                logger.debug(f"Domain rate limited: {domain}")
+                return False
+        except:
             return False
             
         # Basic URL validation
         parsed = urlparse(url)
-        return bool(parsed.netloc and parsed.scheme in ['http', 'https'])
+        is_valid = bool(parsed.netloc and parsed.scheme in ['http', 'https'])
+        logger.debug(f"URL validation for {url}: {is_valid}")
+        return is_valid
 
     def _detect_url_in_input(self, input_text: str) -> Optional[str]:
-        """Detect if there's a direct URL in the input text"""
-        # Enhanced URL detection patterns
-        url_patterns = [
-            r'https?://[^\s<>"]+',  # Standard HTTP/HTTPS URLs
-            r'www\.[^\s<>"]+',      # www. URLs
-            r'[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:/[^\s<>"]*)?'  # Domain.com patterns
-        ]
-        
-        for pattern in url_patterns:
-            matches = re.findall(pattern, input_text)
+        """Optimized URL detection using pre-compiled patterns"""
+        for pattern in self.url_patterns:
+            matches = pattern.findall(input_text)
             if matches:
                 url = matches[0]
-                # Clean up URL
                 url = url.rstrip('.,!?;)')
                 return self._normalize_url(url)
         return None
 
-    async def scrape_content_with_retry(self, url: str, max_retries: int = 3) -> ScrapingResult:
-        """Enhanced scraping with retry logic and error handling"""
+    async def _respect_rate_limits(self):
+        """Intelligent rate limiting with adaptive delays"""
+        current_time = time.time()
+        time_since_last = current_time - self.last_request_time
+        
+        # Base delay
+        min_delay = self.request_delay
+        
+        # Adaptive delay based on request count
+        if self.request_count > 10:
+            min_delay += 0.3  # Add extra delay after many requests
+        if self.request_count > 20:
+            min_delay += 0.5  # Even more delay
+            
+        # Add small random jitter to avoid thundering herd
+        jitter = random.uniform(0, 0.2)
+        total_delay = min_delay + jitter
+        
+        if time_since_last < total_delay:
+            sleep_time = total_delay - time_since_last
+            await asyncio.sleep(sleep_time)
+            
+        self.last_request_time = time.time()
+        self.request_count += 1
+
+    async def scrape_content_production(self, url: str, max_retries: int = 2) -> ScrapingResult:
+        """Production-grade scraping with intelligent rate limiting and error handling"""
         async with self.semaphore:
+            # Store current base URL for relative resolution
+            self._current_base_url = url
+            
+            # Check if domain is rate limited
+            try:
+                domain = urlparse(url).netloc.lower()
+                if domain in self.rate_limited_domains:
+                    return ScrapingResult(url=url, content="", success=False, error="Domain rate limited")
+            except:
+                pass
+            
             for attempt in range(max_retries):
                 try:
-                    await asyncio.sleep(self.request_delay)
+                    # Respect rate limits
+                    await self._respect_rate_limits()
                     
                     full_url = f"https://r.jina.ai/{url}"
-                    timeout = aiohttp.ClientTimeout(total=15)
+                    
+                    # Conservative timeout settings
+                    timeout = aiohttp.ClientTimeout(total=15, connect=5)
                     
                     async with aiohttp.ClientSession(timeout=timeout) as session:
                         async with session.get(full_url) as response:
+                            if response.status == 429:  # Rate limited
+                                domain = urlparse(url).netloc.lower()
+                                self.rate_limited_domains.add(domain)
+                                logger.warning(f"Rate limited by {domain}, adding to blacklist")
+                                
+                                # Exponential backoff for rate limits
+                                backoff_time = (2 ** attempt) * 2
+                                await asyncio.sleep(backoff_time)
+                                continue
+                                
                             response.raise_for_status()
                             content = await response.text()
                             
-                            if len(content.strip()) < 100:  # Too short content
+                            # Content validation
+                            if len(content.strip()) < 50:
                                 raise aiohttp.ClientError("Content too short")
                                 
+                            logger.info(f"Successfully scraped {url}, content length: {len(content)}")
                             return ScrapingResult(
                                 url=url,
                                 content=content,
@@ -142,27 +250,31 @@ class EnhancedWebScraperAI:
                             )
                             
                 except Exception as e:
+                    error_msg = str(e)
+                    
+                    # Handle specific rate limiting errors
+                    if "429" in error_msg or "Too Many Requests" in error_msg:
+                        domain = urlparse(url).netloc.lower()
+                        self.rate_limited_domains.add(domain)
+                        logger.warning(f"Rate limited: {url}")
+                        
+                        # Longer backoff for rate limits
+                        backoff_time = (2 ** attempt) * 3
+                        await asyncio.sleep(backoff_time)
+                        continue
+                    
                     logger.warning(f"Scraping attempt {attempt + 1} failed for {url}: {e}")
                     if attempt == max_retries - 1:
                         self.failed_urls.add(url)
-                        return ScrapingResult(
-                            url=url,
-                            content="",
-                            success=False,
-                            error=str(e)
-                        )
-                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                        return ScrapingResult(url=url, content="", success=False, error=str(e))
+                    
+                    # Regular backoff for other errors
+                    await asyncio.sleep(1)
         
-        # This should never be reached, but just in case
-        return ScrapingResult(
-            url=url,
-            content="",
-            success=False,
-            error="Unexpected error in scraping"
-        )
+        return ScrapingResult(url=url, content="", success=False, error="Unexpected error")
 
-    async def llm_query_with_retry(self, query: str, max_retries: int = 3) -> str:
-        """Enhanced LLM query with retry logic"""
+    async def llm_query_production(self, query: str, max_retries: int = 2) -> str:
+        """Production LLM query with retry"""
         for attempt in range(max_retries):
             try:
                 chat_completion = await self.client.chat.completions.create(
@@ -172,7 +284,8 @@ class EnhancedWebScraperAI:
                         {"role": "system", "content": "You are a helpful AI assistant."},
                         {"role": "user", "content": query},
                     ],
-                    timeout=30
+                    # timeout=25,
+                    # max_tokens=2000
                 )
                 result = chat_completion.choices[0].message.content
                 return result if result is not None else "No response generated"
@@ -180,9 +293,8 @@ class EnhancedWebScraperAI:
                 logger.warning(f"LLM query attempt {attempt + 1} failed: {e}")
                 if attempt == max_retries - 1:
                     raise Exception(f"Failed to generate response after {max_retries} attempts: {e}")
-                await asyncio.sleep(2 ** attempt)
+                await asyncio.sleep(2)
         
-        # This should never be reached, but just in case
         return "Failed to generate response"
 
     async def split_input_prompt(self, input_text: str) -> str:
@@ -232,74 +344,45 @@ class EnhancedWebScraperAI:
         else:
             raise ValueError("Response format does not match the expected pattern.")
 
-    async def duckduckgo_search_enhanced(self, query: str, num_results: int = 15) -> List[str]:
-        """Enhanced DuckDuckGo search with multiple fallback methods"""
+    def duckduckgo_search_production(self, query: str, num_results: int = 15) -> List[str]:
+        """Production DuckDuckGo search with better error handling"""
         urls = []
         
-        # Method 1: Try DuckDuckGo HTML
         try:
             logger.info(f"Searching DuckDuckGo for: {query}")
             search_url = f"https://html.duckduckgo.com/html/?q={query}&s=0"
             
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-            }
+            # Add random delay to avoid being blocked
+            time.sleep(random.uniform(0.5, 1.5))
             
-            response = requests.get(search_url, headers=headers, timeout=15)
+            response = self.sync_session.get(search_url, timeout=15)
             response.raise_for_status()
-            
-            logger.info(f"DuckDuckGo response status: {response.status_code}")
             
             soup = BeautifulSoup(response.text, "html.parser")
             
-            # Try multiple selectors for different DuckDuckGo layouts
-            selectors = [
-                "a.result__url",
-                "a[class*='result']",
-                ".result__body a",
-                ".results_links a",
-                ".web-result a"
-            ]
+            # Try multiple selectors
+            selectors = ["a.result__url", "a[class*='result']", ".result__body a", ".results_links a"]
             
             results = []
             for selector in selectors:
                 found_results = soup.select(selector)
                 if found_results:
                     results = found_results[:num_results]
-                    logger.info(f"Found {len(results)} results with selector: {selector}")
                     break
             
-            # If no results with CSS selectors, try finding all links
+            # Fallback to all links if needed
             if not results:
                 all_links = soup.find_all("a", href=True)
-                logger.info(f"Fallback: Found {len(all_links)} total links")
-                
-                # Filter for result links
-                results = []
-                for link in all_links:
-                    if isinstance(link, Tag):
-                        href = link.get("href", "")
-                        if href and ("uddg" in str(href) or str(href).startswith("http")):
-                            results.append(link)
-                            if len(results) >= num_results:
-                                break
+                results = [link for link in all_links if isinstance(link, Tag) and "uddg" in str(link.get("href", ""))][:num_results]
             
-            # Process found results
+            # Process results
             for result in results:
                 try:
                     if isinstance(result, Tag):
-                        raw_url = result.get("href", "")
+                        raw_url = str(result.get("href", ""))
                         
                         if not raw_url:
                             continue
-                        
-                        # Convert to string if it's not already
-                        raw_url = str(raw_url)
                         
                         # Handle DuckDuckGo redirect URLs
                         if "uddg" in raw_url:
@@ -314,98 +397,39 @@ class EnhancedWebScraperAI:
                         else:
                             continue
                         
-                        # Clean and normalize URL
-                        decoded_url = decoded_url.strip()
-                        normalized_url = self._normalize_url(decoded_url)
+                        normalized_url = self._normalize_url(decoded_url.strip())
                         
                         if self._is_valid_url(normalized_url) and normalized_url not in urls:
                             urls.append(normalized_url)
-                            logger.info(f"Added URL: {normalized_url}")
                         
-                except Exception as e:
-                    logger.warning(f"Error processing search result: {e}")
+                except Exception:
                     continue
             
         except Exception as e:
             logger.warning(f"DuckDuckGo search failed: {e}")
         
-        # Method 2: Fallback to Google if DuckDuckGo fails
-        if not urls:
-            try:
-                logger.info("Fallback: Trying Google search")
-                urls = await self._google_search_fallback(query, num_results)
-            except Exception as e:
-                logger.warning(f"Google fallback failed: {e}")
-        
-        # Method 3: Manual URL construction for common sites
-        if not urls:
-            logger.info("Fallback: Constructing common URLs")
-            urls = self._construct_common_urls(query)
-        
-        logger.info(f"Total URLs found: {len(urls)}")
+        logger.info(f"Found {len(urls)} URLs in search")
         return urls[:num_results]
-    
-    async def _google_search_fallback(self, query: str, num_results: int = 10) -> List[str]:
-        """Fallback Google search method"""
-        try:
-            from googlesearch import search
-            logger.info("Using Google search fallback")
-            results = search(query, num_results=num_results, lang="en")
-            urls = []
-            for url in results:
-                if isinstance(url, str):
-                    normalized_url = self._normalize_url(url)
-                    if self._is_valid_url(normalized_url):
-                        urls.append(normalized_url)
-            return urls
-        except ImportError:
-            logger.warning("googlesearch library not available")
-            return []
-        except Exception as e:
-            logger.warning(f"Google search fallback error: {e}")
-            return []
-    
-    def _construct_common_urls(self, query: str) -> List[str]:
-        """Construct URLs for common sites based on query"""
-        urls = []
-        query_clean = query.lower().replace(" ", "+")
+
+    async def duckduckgo_search_enhanced(self, query: str, num_results: int = 15) -> List[str]:
+        """Async wrapper for production search"""
+        loop = asyncio.get_event_loop()
         
-        # Common news and information sites
-        common_sites = [
-            f"https://www.google.com/search?q={query_clean}",
-            f"https://en.wikipedia.org/wiki/{query.replace(' ', '_')}",
-            f"https://www.reuters.com/search/news?blob={query_clean}",
-            f"https://www.bbc.com/search?q={query_clean}",
-            f"https://www.cnn.com/search?q={query_clean}"
-        ]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            urls = await loop.run_in_executor(
+                executor, 
+                partial(self.duckduckgo_search_production, query, num_results)
+            )
         
-        # For stock queries
-        if "stock" in query.lower() or "price" in query.lower():
-            ticker = query.split()[0].upper()  # Assume first word is ticker
-            urls.extend([
-                f"https://finance.yahoo.com/quote/{ticker}",
-                f"https://www.marketwatch.com/investing/stock/{ticker}",
-                f"https://www.google.com/finance/quote/{ticker}:NASDAQ"
-            ])
-        
-        # For company/organization queries
-        if any(word in query.lower() for word in ["company", "organization", "corp", "inc"]):
-            company_name = query.replace(" ", "")
-            urls.extend([
-                f"https://www.{company_name.lower()}.com",
-                f"https://www.{company_name.lower()}.org",
-                f"https://en.wikipedia.org/wiki/{company_name}"
-            ])
-        
-        normalized_urls = []
-        for url in common_sites:
-            normalized_url = self._normalize_url(url)
-            if normalized_url and self._is_valid_url(normalized_url):
-                normalized_urls.append(normalized_url)
-        return normalized_urls
+        return urls
 
     async def generate_analysis_prompt(self, scraped_content: str, query: str) -> str:
-        """Generate prompt for analyzing scraped content"""
+        """Generate prompt for analyzing scraped content with enhanced URL extraction"""
+        # Conservative content truncation
+        max_content_length = 100000
+        if len(scraped_content) > max_content_length:
+            scraped_content = scraped_content[:max_content_length] + "..."
+        
         prompt = f"""
         Based on the scraped content provided below, answer the query strictly following the format outlined. 
 
@@ -426,19 +450,43 @@ class EnhancedWebScraperAI:
            Answer: Not Found
            Next URL: None
         6. The response must adhere strictly to the format without any deviation.
+        7. CRITICAL: When looking for next URLs, look for specific department links, faculty pages, or relevant section links. 
+           For queries about department heads or specific information, look for departmental links like "Computer Science", "Engineering", "Faculty", etc.
+           Provide the COMPLETE URL, including the full path if it's a relative URL.
+        8. If you find multiple relevant links, choose the most specific one that directly relates to the query.
+        9. Make sure to provide fully formed URLs, not partial paths.
         """
         return prompt
 
     async def parse_analysis_response(self, response: str) -> AnalysisResult:
-        """Parse the analysis response to extract answer and next URL"""
-        match = re.search(r"Answer: (.+)\nNext URL: (.+)", response)
+        """Enhanced parsing with better URL extraction and validation"""
+        logger.debug(f"Parsing LLM response: {response}")
+        
+        # More flexible regex to handle multiline responses
+        match = re.search(r"Answer:\s*(.+?)\s*Next URL:\s*(.+)", response, re.DOTALL | re.IGNORECASE)
         if match:
             answer = match.group(1).strip()
             next_url = match.group(2).strip()
             
-            # Normalize next URL
-            if next_url and next_url.lower() != 'none':
-                next_url = self._normalize_url(next_url)
+            logger.debug(f"Extracted answer: {answer}")
+            logger.debug(f"Extracted next URL: {next_url}")
+            
+            # Clean up the answer (remove any trailing newlines)
+            answer = re.sub(r'\n+', ' ', answer).strip()
+            
+            # Normalize next URL with better validation
+            if next_url and next_url.lower() not in ['none', 'null', 'n/a']:
+                # Use the current base URL for relative resolution
+                base_url = getattr(self, '_current_base_url', None)
+                normalized_url = self._normalize_url(next_url, base_url)
+                
+                # Validate the normalized URL
+                if self._is_valid_url(normalized_url):
+                    next_url = normalized_url
+                    logger.info(f"Successfully normalized next URL: {next_url}")
+                else:
+                    logger.warning(f"Invalid normalized URL: {normalized_url}")
+                    next_url = None
             else:
                 next_url = None
                 
@@ -447,6 +495,8 @@ class EnhancedWebScraperAI:
                 next_url=next_url,
                 confidence=0.8 if answer != "Not Found" else 0.2
             )
+        
+        logger.error(f"Failed to parse response format: {response}")
         raise ValueError("Response format does not match the expected pattern.")
 
     def generate_final_prompt(self, collected_answers: List[str], query: str) -> str:
@@ -454,8 +504,8 @@ class EnhancedWebScraperAI:
         formatted_answers = "; ".join(collected_answers)
         return f"Based On The Context Provided: {formatted_answers}, The Context Provided May Also Contain Some Irrelevant Information, So Provide The Accurate Answer For The Query: {query}"
 
-    async def deep_scrape_single_url(self, start_url: str, query: str, max_depth: Optional[int] = None) -> List[str]:
-        """Deep scrape a single URL following next URLs to specified depth"""
+    async def deep_scrape_single_url_production(self, start_url: str, query: str, max_depth: Optional[int] = None) -> List[str]:
+        """Production deep scrape with enhanced URL tracking and validation"""
         if max_depth is None:
             max_depth = self.max_depth
             
@@ -463,7 +513,7 @@ class EnhancedWebScraperAI:
         current_url = start_url
         current_depth = 0
         
-        logger.info(f"Starting deep scrape from: {start_url}")
+        logger.info(f"Production deep scrape from: {start_url}")
         
         while current_url and current_depth < max_depth:
             if current_url in self.visited_urls:
@@ -471,7 +521,7 @@ class EnhancedWebScraperAI:
                 break
                 
             if not self._is_valid_url(current_url):
-                logger.warning(f"Invalid URL: {current_url}")
+                logger.warning(f"Invalid or rate-limited URL: {current_url}")
                 break
                 
             self.visited_urls.add(current_url)
@@ -479,8 +529,8 @@ class EnhancedWebScraperAI:
             
             logger.info(f"Scraping depth {current_depth}: {current_url}")
             
-            # Scrape content
-            scraping_result = await self.scrape_content_with_retry(current_url)
+            # Production scraping with rate limit handling
+            scraping_result = await self.scrape_content_production(current_url)
             
             if not scraping_result.success:
                 logger.error(f"Failed to scrape {current_url}: {scraping_result.error}")
@@ -489,7 +539,7 @@ class EnhancedWebScraperAI:
             # Analyze content
             try:
                 analysis_prompt = await self.generate_analysis_prompt(scraping_result.content, query)
-                llm_response = await self.llm_query_with_retry(analysis_prompt)
+                llm_response = await self.llm_query_production(analysis_prompt)
                 analysis_result = await self.parse_analysis_response(llm_response)
                 
                 logger.info(f"Analysis result - Answer: {analysis_result.answer[:100]}...")
@@ -499,34 +549,46 @@ class EnhancedWebScraperAI:
                 if analysis_result.answer != "Not Found":
                     collected_answers.append(analysis_result.answer)
                     
-                # Check if we should continue
-                if not analysis_result.next_url or analysis_result.next_url == current_url:
-                    logger.info("No more URLs to explore or same URL returned")
+                # Enhanced URL validation to avoid loops
+                if not analysis_result.next_url:
+                    logger.info("No next URL provided")
                     break
-                    
-                current_url = analysis_result.next_url
-                current_depth += 1
+                elif analysis_result.next_url == current_url:
+                    logger.info("Same URL returned, stopping to avoid loop")
+                    break
+                elif analysis_result.next_url in self.visited_urls:
+                    logger.info(f"Next URL already visited: {analysis_result.next_url}")
+                    break
+                else:
+                    # Validate next URL before proceeding
+                    if self._is_valid_url(analysis_result.next_url):
+                        current_url = analysis_result.next_url
+                        current_depth += 1
+                        logger.info(f"Moving to next URL at depth {current_depth}: {current_url}")
+                    else:
+                        logger.warning(f"Next URL is invalid: {analysis_result.next_url}")
+                        break
                 
             except Exception as e:
                 logger.error(f"Error analyzing content from {current_url}: {e}")
                 break
                 
-        logger.info(f"Deep scrape completed. Found {len(collected_answers)} answers at depth {current_depth}")
+        logger.info(f"Production deep scrape completed. Found {len(collected_answers)} answers at depth {current_depth}")
         return collected_answers
 
-    async def scrape_multiple_urls_parallel(self, urls: List[str], query: str) -> List[str]:
-        """Scrape multiple URLs in parallel with controlled concurrency"""
-        logger.info(f"Starting parallel scrape of {len(urls)} URLs")
+    async def scrape_multiple_urls_production(self, urls: List[str], query: str) -> List[str]:
+        """Production parallel scraping with conservative concurrency"""
+        logger.info(f"Production parallel scrape of {len(urls)} URLs")
         
-        # Create tasks for each URL
+        # Create tasks for parallel execution
         tasks = []
-        for url in urls:
+        for url in urls[:12]:  # Process reasonable number of URLs
             if not self._is_valid_url(url) or url in self.visited_urls:
                 continue
-            task = asyncio.create_task(self.deep_scrape_single_url(url, query))
+            task = asyncio.create_task(self.deep_scrape_single_url_production(url, query))
             tasks.append(task)
             
-        # Execute tasks with progress tracking
+        # Execute with conservative approach
         all_answers = []
         completed_tasks = 0
         
@@ -540,49 +602,45 @@ class EnhancedWebScraperAI:
                 logger.error(f"Error in parallel scraping task: {e}")
                 completed_tasks += 1
                 
-        logger.info(f"Parallel scraping completed. Total answers found: {len(all_answers)}")
+        logger.info(f"Production parallel scraping completed. Total answers found: {len(all_answers)}")
         return all_answers
 
-    async def process_query_enhanced(self, input_text: str, skip_urls: Optional[List[str]] = None, export_results: bool = False) -> Union[str, Tuple[str, Optional[str]]]:
-        """Enhanced main method to process a natural language query"""
+    async def process_query_production(self, input_text: str, skip_urls: Optional[List[str]] = None, export_results: bool = True) -> Union[str, Tuple[str, Optional[str]]]:
+        """Production query processing - optimized for reliability"""
         if skip_urls is None:
             skip_urls = []
             
-        # Reset state for new query
+        # Reset state
         self.visited_urls.clear()
         self.failed_urls.clear()
         self.url_depth_map.clear()
-        
-        # Add skip URLs to failed URLs to avoid them
         self.failed_urls.update(skip_urls)
+        self.request_count = 0  # Reset request counter
         
         start_time = time.time()
         
         try:
-            logger.info(f"Processing query: {input_text}")
+            logger.info(f"Production processing: {input_text}")
             
-            # Check if URL is directly detected in input
+            # URL detection
             direct_url = self._detect_url_in_input(input_text)
             
             if direct_url:
                 logger.info(f"Direct URL detected: {direct_url}")
-                # Extract query using LLM
                 split_prompt = await self.split_input_prompt(input_text)
-                split_response = await self.llm_query_with_retry(split_prompt)
+                split_response = await self.llm_query_production(split_prompt)
                 _, query = await self.extract_url_and_query(split_response)
                 
-                # Deep scrape the single URL
-                collected_answers = await self.deep_scrape_single_url(direct_url, query)
+                collected_answers = await self.deep_scrape_single_url_production(direct_url, query)
                 
             else:
-                logger.info("No direct URL detected, using web search")
-                # Split input into URL and query
+                logger.info("No direct URL, using production search")
                 split_prompt = await self.split_input_prompt(input_text)
-                split_response = await self.llm_query_with_retry(split_prompt)
+                split_response = await self.llm_query_production(split_prompt)
                 base_url, query = await self.extract_url_and_query(split_response)
                 
-                # Get search results
-                search_results = await self.duckduckgo_search_enhanced(base_url, num_results=12)
+                # Production search
+                search_results = await self.duckduckgo_search_enhanced(base_url, num_results=15)
                 
                 if not search_results:
                     result = "No search results found for the query."
@@ -590,20 +648,21 @@ class EnhancedWebScraperAI:
                     
                 logger.info(f"Found {len(search_results)} search results")
                 
-                # Scrape all URLs in parallel
-                collected_answers = await self.scrape_multiple_urls_parallel(search_results, query)
+                # Production parallel scraping
+                collected_answers = await self.scrape_multiple_urls_production(search_results, query)
             
             # Generate final answer
             if collected_answers:
                 logger.info(f"Generating final answer from {len(collected_answers)} collected answers")
                 final_prompt = self.generate_final_prompt(collected_answers, query if 'query' in locals() else input_text)
-                final_response = await self.llm_query_with_retry(final_prompt)
+                final_response = await self.llm_query_production(final_prompt)
                 
                 processing_time = time.time() - start_time
-                logger.info(f"Query processed successfully in {processing_time:.2f} seconds")
+                logger.info(f"Production processing completed in {processing_time:.2f} seconds")
                 logger.info(f"Visited {len(self.visited_urls)} URLs, Failed: {len(self.failed_urls)}")
+                logger.info(f"Rate limited domains: {len(self.rate_limited_domains)}")
                 
-                # Export results if requested
+                # Export results
                 if export_results:
                     stats = self.get_processing_stats()
                     filepath = self._export_to_file(input_text, final_response, stats, processing_time)
@@ -615,76 +674,27 @@ class EnhancedWebScraperAI:
                 return (result, None) if export_results else result
                 
         except Exception as e:
-            logger.error(f"Error in process_query_enhanced: {e}")
+            logger.error(f"Error in production processing: {e}")
             result = f"An error occurred while processing the query: {str(e)}"
             return (result, None) if export_results else result
 
     def get_processing_stats(self) -> dict:
-        """Get processing statistics"""
+        """Get comprehensive processing statistics"""
         return {
             "visited_urls": len(self.visited_urls),
             "failed_urls": len(self.failed_urls),
+            "rate_limited_domains": len(self.rate_limited_domains),
+            "total_requests": self.request_count,
             "max_depth_reached": max(self.url_depth_map.values()) if self.url_depth_map else 0,
             "url_depth_distribution": dict(sorted(self.url_depth_map.items(), key=lambda x: x[1]))
         }
 
-    async def debug_search(self, query: str) -> dict:
-        """Debug method to test search functionality"""
-        logger.info(f"Debug: Testing search for query: {query}")
-        
-        debug_info = {
-            "query": query,
-            "search_url": f"https://html.duckduckgo.com/html/?q={query}&s=0",
-            "results": [],
-            "errors": []
-        }
-        
-        try:
-            search_url = f"https://html.duckduckgo.com/html/?q={query}&s=0"
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            
-            response = requests.get(search_url, headers=headers, timeout=15)
-            debug_info["status_code"] = response.status_code
-            debug_info["response_length"] = len(response.text)
-            
-            soup = BeautifulSoup(response.text, "html.parser")
-            
-            # Check different selectors
-            selectors = [
-                "a.result__url",
-                "a[class*='result']", 
-                ".result__body a",
-                ".results_links a"
-            ]
-            
-            for selector in selectors:
-                found = soup.select(selector)
-                debug_info["results"].append({
-                    "selector": selector,
-                    "count": len(found),
-                    "sample_hrefs": [str(a.get("href", ""))[:100] for a in found[:3] if isinstance(a, Tag)]
-                })
-            
-            # Check all links
-            all_links = soup.find_all("a", href=True)
-            debug_info["total_links"] = len(all_links)
-            debug_info["sample_links"] = [str(a.get("href", ""))[:100] for a in all_links[:10] if isinstance(a, Tag)]
-            
-        except Exception as e:
-            debug_info["errors"].append(str(e))
-            
-        return debug_info
-
     def _generate_filename(self, query: str) -> str:
         """Generate a relevant filename from the query"""
-        # Clean the query for filename
-        clean_query = re.sub(r'[^\w\s-]', '', query)  # Remove special characters
-        clean_query = re.sub(r'\s+', '_', clean_query)  # Replace spaces with underscores
-        clean_query = clean_query.strip('_')  # Remove leading/trailing underscores
+        clean_query = re.sub(r'[^\w\s-]', '', query)
+        clean_query = re.sub(r'\s+', '_', clean_query)
+        clean_query = clean_query.strip('_')
         
-        # Limit length and add timestamp
         if len(clean_query) > 50:
             clean_query = clean_query[:50]
         
@@ -700,15 +710,12 @@ class EnhancedWebScraperAI:
     def _export_to_file(self, query: str, answer: str, stats: dict, processing_time: float) -> str:
         """Export query results to a text file"""
         try:
-            # Create folder and filename
             answers_folder = self._create_answers_folder()
             filename = self._generate_filename(query)
             filepath = answers_folder / filename
             
-            # Prepare content
             content = self._format_export_content(query, answer, stats, processing_time)
             
-            # Write to file
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(content)
             
@@ -740,6 +747,8 @@ PROCESSING STATISTICS:
 - Processing Time: {processing_time:.2f} seconds
 - URLs Visited: {stats.get('visited_urls', 0)}
 - URLs Failed: {stats.get('failed_urls', 0)}
+- Rate Limited Domains: {stats.get('rate_limited_domains', 0)}
+- Total HTTP Requests: {stats.get('total_requests', 0)}
 - Max Depth Reached: {stats.get('max_depth_reached', 0)}
 - Total URLs Processed: {stats.get('visited_urls', 0) + stats.get('failed_urls', 0)}
 
@@ -752,8 +761,11 @@ VISITED URLS:
 FAILED URLS:
 {self._format_failed_urls()}
 
+RATE LIMITED DOMAINS:
+{self._format_rate_limited_domains()}
+
 ================================================================================
-Generated by Enhanced WebScraperAI v2.0
+Generated by Production WebScraperAI v1
 ================================================================================
         """.strip()
         
@@ -767,11 +779,9 @@ Generated by Enhanced WebScraperAI v2.0
         formatted = []
         depth_counts = {}
         
-        # Count URLs at each depth
         for url, depth in depth_dist.items():
             depth_counts[depth] = depth_counts.get(depth, 0) + 1
         
-        # Format the distribution
         for depth in sorted(depth_counts.keys()):
             count = depth_counts[depth]
             formatted.append(f"  Depth {depth}: {count} URL{'s' if count != 1 else ''}")
@@ -800,87 +810,126 @@ Generated by Enhanced WebScraperAI v2.0
             formatted.append(f"  {i}. {url}")
         
         return '\n'.join(formatted)
+    
+    def _format_rate_limited_domains(self) -> str:
+        """Format rate limited domains for display"""
+        if not self.rate_limited_domains:
+            return "No domains rate limited"
+        
+        formatted = []
+        for i, domain in enumerate(sorted(self.rate_limited_domains), 1):
+            formatted.append(f"  {i}. {domain}")
+        
+        return '\n'.join(formatted)
 
 
-# Example usage with enhanced features and file export
-async def main():
-    """Example usage of the Enhanced WebScraperAI system with file export"""
-    # Initialize with custom parameters
-    scraper = EnhancedWebScraperAI(
-        max_depth=6,  # Allow deeper exploration
-        max_concurrent_requests=4,  # More parallel requests
-        request_delay=0.5  # Faster processing
+# Production demo - optimized for real-world reliability
+async def production_demo():
+    """Production demo - designed for reliability and rate limit compliance"""
+    # Initialize with production settings
+    scraper = ProductionWebScraperAI(
+        max_depth=6,                # Increased depth to match old code
+        max_concurrent_requests=3,  # Conservative to avoid rate limits
+        request_delay=0.8           # Longer delay to respect servers
     )
     
-    # Example queries
     queries = [
-        # "What does https://openai.com do?",  # Direct URL - will deep scrape
-        # "Tell me about https://github.com/microsoft/vscode features",  # Direct URL with specific question
-        # "Tesla stock price today"  # No URL - will search multiple sources
-        # "What does Tesla do?"
-        "Visit iitr.ac.in and find out who is head of the department of computer science along with his contact details"
+        "Visit iitr.ac.in and find out who is head of the department of computer science along with his contact details",
     ]
     
     exported_files = []
+    total_start = time.time()
     
-    for query in queries:
+    for i, query in enumerate(queries, 1):
         print(f"\n{'='*100}")
-        print(f"Processing query: {query}")
+        print(f"PRODUCTION QUERY {i}/{len(queries)}: {query}")
         print(f"{'='*100}")
         
-        start_time = time.time()
+        query_start = time.time()
         
-        # Process query with file export
-        result, filepath = await scraper.process_query_enhanced(query, export_results=True)
-        processing_time = time.time() - start_time
+        # Production processing with export
+        result, filepath = await scraper.process_query_production(query, export_results=True)
         
-        print(f"\nFinal Answer: {result}")
+        query_time = time.time() - query_start
         
-        # Get processing statistics
+        print(f"\nResult: {result}")
+        print(f"Query processed in: {query_time:.2f} seconds")
+        
         stats = scraper.get_processing_stats()
-        print(f"\nProcessing Statistics:")
-        print(f"- Processing time: {processing_time:.2f} seconds")
-        print(f"- URLs visited: {stats['visited_urls']}")
-        print(f"- URLs failed: {stats['failed_urls']}")
-        print(f"- Max depth reached: {stats['max_depth_reached']}")
+        print(f"URLs visited: {stats['visited_urls']}, Failed: {stats['failed_urls']}")
+        print(f"Rate limited domains: {stats['rate_limited_domains']}")
+        print(f"Total HTTP requests: {stats['total_requests']}")
+        print(f"Max depth reached: {stats['max_depth_reached']}")
         
         if filepath:
-            print(f"- Results exported to: {filepath}")
+            print(f"Results exported to: {filepath}")
             exported_files.append(filepath)
-        
-        print(f"{'='*100}")
+            
+        # Add delay between queries to be extra polite
+        if i < len(queries):
+            print("Waiting 3 seconds before next query...")
+            await asyncio.sleep(3)
+    
+    total_time = time.time() - total_start
+    print(f"\n{'='*100}")
+    print(f"TOTAL PROCESSING TIME: {total_time:.2f} seconds")
+    print(f"AVERAGE TIME PER QUERY: {total_time/len(queries):.2f} seconds")
+    print(f"TOTAL EXPORTED FILES: {len(exported_files)}")
+    print(f"{'='*100}")
     
     # Summary of exported files
-    print(f"\n{'='*100}")
-    print("EXPORT SUMMARY")
-    print(f"{'='*100}")
-    print(f"Total queries processed: {len(queries)}")
-    print(f"Files exported: {len(exported_files)}")
-    print("\nExported files:")
+    print(f"\nEXPORTED FILES:")
     for i, filepath in enumerate(exported_files, 1):
         print(f"  {i}. {filepath}")
-    print(f"{'='*100}")
 
 
-# Standalone function for single query processing
-async def process_single_query(query: str, max_depth: int = 6, export: bool = True) -> Tuple[str, Optional[str]]:
-    """Process a single query and optionally export results"""
-    scraper = EnhancedWebScraperAI(max_depth=max_depth)
+# Single production query function
+async def production_query(query: str, export: bool = True) -> Tuple[str, Optional[str]]:
+    """Process a single query with production-grade reliability"""
+    scraper = ProductionWebScraperAI(
+        max_depth=6,  # Match old code depth
+        max_concurrent_requests=3,
+        request_delay=0.8
+    )
     
-    print(f"Processing: {query}")
-    result, filepath = await scraper.process_query_enhanced(query, export_results=export)
+    start_time = time.time()
+    result, filepath = await scraper.process_query_production(query, export_results=export)
+    processing_time = time.time() - start_time
     
+    print(f"Production query completed in {processing_time:.2f} seconds")
     if export and filepath:
         print(f"Results exported to: {filepath}")
     
     return result, filepath
 
 
+# Speed-optimized version for testing (less conservative)
+async def fast_production_query(query: str, export: bool = False) -> str:
+    """Faster production query for testing - slightly more aggressive"""
+    scraper = ProductionWebScraperAI(
+        max_depth=6,  # Match old code depth
+        max_concurrent_requests=4,  # Slightly higher
+        request_delay=0.5  # Faster
+    )
+    
+    start_time = time.time()
+    result = await scraper.process_query_production(query, export_results=export)
+    processing_time = time.time() - start_time
+    
+    print(f"Fast production query completed in {processing_time:.2f} seconds")
+    return result
+
+
 if __name__ == "__main__":
-    # You can either run the full demo or process a single query
+    # Choose your mode:
     
-    # Full demo
-    asyncio.run(main())
+    # 1. Full production demo (recommended for real use)
+    # asyncio.run(production_demo())
     
-    # Or process a single query
-    # asyncio.run(process_single_query("What is the latest news about AI?"))
+    # 2. Single production query
+    result, filepath = asyncio.run(production_query("Weather In Guntur Now"))
+    print(f"Result: {result}")
+    
+    # 3. Fast testing mode
+    # result = asyncio.run(fast_production_query("Visit iitr.ac.in and find out who is head of the department of computer science along with his contact details"))
+    # print(f"Result: {result}")

@@ -1,0 +1,80 @@
+================================================================================
+PRODUCTION WEB SCRAPER AI - QUERY RESULTS (FIXED VERSION)
+================================================================================
+
+Timestamp: 2025-07-13 23:25:57
+
+QUESTION:
+Latest news on AI advancements
+
+ANSWER:
+The latest advancements in AI include several significant developments:
+
+1. **Elon Musk's SpaceX and xAI**: SpaceX is potentially investing in xAI, which is focused on advancing artificial intelligence technologies.
+
+2. **AI Refugee Avatar**: A UN research institute has created an AI refugee avatar, showcasing the application of AI in humanitarian efforts.
+
+3. **OpenAI's Model Release Delay**: OpenAI has delayed the release of its open model, which has garnered attention in the AI community.
+
+4. **AI Coding Tools and Marketplaces**: AWS has launched an AI agent marketplace, and there are ongoing developments in AI coding tools that assist developers.
+
+5. **Image-to-Video Generation**: Google has added capabilities for generating videos from images, enhancing creative applications of AI.
+
+6. **Language Comprehension Breakthrough**: Researchers have discovered that AI neural networks transition from treating sentences as puzzles to understanding word meanings after sufficient exposure, marking a significant advancement in language comprehension.
+
+7. **Climate-Friendly Cement Recipes**: AI researchers in Switzerland have developed a system that can create climate-friendly cement recipes in seconds, which could significantly reduce the carbon footprint of cement production.
+
+8. **CellLENS System**: A new AI system called CellLENS has been developed to uncover hidden cell subtypes, enhancing precision medicine and advancing cancer immunotherapy.
+
+These advancements reflect the rapid evolution of AI technologies and their applications across various fields.
+
+PROCESSING STATISTICS:
+- Processing Time: 22.10 seconds
+- URLs Visited: 11
+- URLs Failed: 6
+- Rate Limited Domains: 0
+- Total HTTP Requests: 17
+- Max Depth Reached: 0
+- Total URLs Processed: 17
+
+PRODUCTION OPTIMIZATIONS:
+- FIXED: Enhanced URL normalization and validation
+- FIXED: Better relative URL resolution with base URL context
+- FIXED: Improved LLM response parsing with multiline support
+- Intelligent rate limiting with adaptive delays
+- Domain-level rate limit tracking
+- Conservative concurrency (3 requests max)
+- Exponential backoff for failures
+- Random jitter to avoid thundering herd
+- 429 error handling and domain blacklisting
+
+URL DEPTH DISTRIBUTION:
+  Depth 0: 11 URLs
+
+VISITED URLS:
+  1. [Depth 0] https://apnews.com/hub/artificial-intelligence
+  2. [Depth 0] https://currentai.news/
+  3. [Depth 0] https://duckduckgo.com/y.js?ad_domain=pega.com&ad_provider=bingv7aa&ad_type=txad&click_metadata=x6o02qyDWbJUKYHjX3u_X3AlTZi-zKBxJNzuUS2inJrfPSFvR6dVL6LGvr3nV-gjDJFMhlrQo2u8caQy4hzIzT8VAe_Qzbhyh50j4qdRTYFCNWxQphnxwMTXUl89V22C.G64fUAn_JryDGToKZI4Arw&rut=961ec13558ab49c10552bd6d9d600185fa54cc90e4d51ff8b160b6d322350350&u3=https://www.bing.com/aclick?ld=e8GWUq7Pm2v5SYyI6DtfLzPzVUCUzJW2OazJjDi3pr9GrMi2BH3S28Tspril8Q-bNluYBqvBQsoYipbNeabnFXQWMqqUhmUoq0SIJPBwh4PEj4XU6KgnDMUD7JSx92ARslZaKEtPmcQ2CYhITKpcP0Xn9hZbABz0ww20j11cwq-uwDLIKdGa3E9heHSf5A-PaYZdGTiQ&u=aHR0cHMlM2ElMmYlMmZhZC5kb3VibGVjbGljay5uZXQlMmZzZWFyY2hhZHMlMmZsaW5rJTJmY2xpY2slM2ZsaWQlM2Q0MzcwMDA3MDM1NDkwNjA3NiUyNmRzX3Nfa3dnaWQlM2Q1ODcwMDAwNzc0NjY1NTIzNyUyNmRzX2FfY2lkJTNkNDAwODE3MjUwJTI2ZHNfYV9jYWlkJTNkMTY2NTIzNDk1MjYlMjZkc19hX2FnaWQlM2QxMzIxNTg2MTczODIlMjZkc19hX2xpZCUzZGt3ZC0zMjQ2NDY2NTY4NTMlMjYlMjZkc19lX2FkaWQlM2Q4MTQzMjY3OTg1NjQ3MiUyNmRzX2VfdGFyZ2V0X2lkJTNka3dkLTgxNDMyNzk2MzUzNTc3JTNhbG9jLTkwJTI2JTI2ZHNfZV9uZXR3b3JrJTNkcyUyNmRzX3VybF92JTNkMiUyNmRzX2Rlc3RfdXJsJTNkaHR0cHMlM2ElMmYlMmZ3d3cucGVnYS5jb20lMmZhaS1pbm5vdmF0aW9uJTNmdXRtX3NvdXJjZSUzZGJpbmclMjZ1dG1fbWVkaXVtJTNkY3BjJTI2dXRtX2NhbXBhaWduJTNkQl9JbmRpYV9Ob25CcmFuZF9BSV9DRV9Ccm9hZF8oQ1BOLTExMTA2NylfRU4lMjZ1dG1fdGVybSUzZGFydGlmaWNpYWwlMjUyMGludGVsbGlnZW5jZSUyNTIwZGF0YSUyNmdsb2MlM2QxNTg1MTElMjZ1dG1fY29udGVudCUzZHBjcmlkJTdjJTdjcGt3JTdja3dkLTgxNDMyNzk2MzUzNTc3JTNhbG9jLTkwJTdjcG10JTdjYiU3Y3BkdiU3Y2MlN2MlMjZnY2xpZCUzZDNjYzI3NWU5YTRlNjE1MzlhNzdiMWQ5YTU3ZmQ0MmYxJTI2Z2Nsc3JjJTNkM3AuZHMlMjYlMjZtc2Nsa2lkJTNkM2NjMjc1ZTlhNGU2MTUzOWE3N2IxZDlhNTdmZDQyZjElMjZ1dG1fc291cmNlJTNkYmluZyUyNnV0bV9tZWRpdW0lM2RjcGMlMjZ1dG1fY2FtcGFpZ24lM2RCX0luZGlhX05vbkJyYW5kX0FJX0NFX0Jyb2FkXyhDUE4tMTExMDY3KV9FTiUyNnV0bV90ZXJtJTNkYXJ0aWZpY2lhbCUyNTIwaW50ZWxsaWdlbmNlJTI1MjBkYXRhJTI2dXRtX2NvbnRlbnQlM2RBSQ&rlid=3cc275e9a4e61539a77b1d9a57fd42f1&vqd=4-87550287223213330323116461630452996529&iurl={1}IG=E4677114845545F3BAFAABDB2B628C00&CID=0C3FBD50865E61982E1CAB7887A6602A&ID=DevEx,5047.1
+  4. [Depth 0] https://indianexpress.com/section/technology/artificial-intelligence/
+  5. [Depth 0] https://justainews.com/latest/
+  6. [Depth 0] https://news.mit.edu/topic/artificial-intelligence2
+  7. [Depth 0] https://techcrunch.com/category/artificial-intelligence/
+  8. [Depth 0] https://www.newsweek.com/ai
+  9. [Depth 0] https://www.pcmag.com/news/categories/ai
+  10. [Depth 0] https://www.reuters.com/technology/artificial-intelligence/
+  11. [Depth 0] https://www.sciencedaily.com/news/computers_math/artificial_intelligence/
+
+FAILED URLS:
+  1. https://apnews.com/hub/artificial-intelligence
+  2. https://duckduckgo.com/y.js?ad_domain=pega.com&ad_provider=bingv7aa&ad_type=txad&click_metadata=x6o02qyDWbJUKYHjX3u_X3AlTZi-zKBxJNzuUS2inJrfPSFvR6dVL6LGvr3nV-gjDJFMhlrQo2u8caQy4hzIzT8VAe_Qzbhyh50j4qdRTYFCNWxQphnxwMTXUl89V22C.G64fUAn_JryDGToKZI4Arw&rut=961ec13558ab49c10552bd6d9d600185fa54cc90e4d51ff8b160b6d322350350&u3=https://www.bing.com/aclick?ld=e8GWUq7Pm2v5SYyI6DtfLzPzVUCUzJW2OazJjDi3pr9GrMi2BH3S28Tspril8Q-bNluYBqvBQsoYipbNeabnFXQWMqqUhmUoq0SIJPBwh4PEj4XU6KgnDMUD7JSx92ARslZaKEtPmcQ2CYhITKpcP0Xn9hZbABz0ww20j11cwq-uwDLIKdGa3E9heHSf5A-PaYZdGTiQ&u=aHR0cHMlM2ElMmYlMmZhZC5kb3VibGVjbGljay5uZXQlMmZzZWFyY2hhZHMlMmZsaW5rJTJmY2xpY2slM2ZsaWQlM2Q0MzcwMDA3MDM1NDkwNjA3NiUyNmRzX3Nfa3dnaWQlM2Q1ODcwMDAwNzc0NjY1NTIzNyUyNmRzX2FfY2lkJTNkNDAwODE3MjUwJTI2ZHNfYV9jYWlkJTNkMTY2NTIzNDk1MjYlMjZkc19hX2FnaWQlM2QxMzIxNTg2MTczODIlMjZkc19hX2xpZCUzZGt3ZC0zMjQ2NDY2NTY4NTMlMjYlMjZkc19lX2FkaWQlM2Q4MTQzMjY3OTg1NjQ3MiUyNmRzX2VfdGFyZ2V0X2lkJTNka3dkLTgxNDMyNzk2MzUzNTc3JTNhbG9jLTkwJTI2JTI2ZHNfZV9uZXR3b3JrJTNkcyUyNmRzX3VybF92JTNkMiUyNmRzX2Rlc3RfdXJsJTNkaHR0cHMlM2ElMmYlMmZ3d3cucGVnYS5jb20lMmZhaS1pbm5vdmF0aW9uJTNmdXRtX3NvdXJjZSUzZGJpbmclMjZ1dG1fbWVkaXVtJTNkY3BjJTI2dXRtX2NhbXBhaWduJTNkQl9JbmRpYV9Ob25CcmFuZF9BSV9DRV9Ccm9hZF8oQ1BOLTExMTA2NylfRU4lMjZ1dG1fdGVybSUzZGFydGlmaWNpYWwlMjUyMGludGVsbGlnZW5jZSUyNTIwZGF0YSUyNmdsb2MlM2QxNTg1MTElMjZ1dG1fY29udGVudCUzZHBjcmlkJTdjJTdjcGt3JTdja3dkLTgxNDMyNzk2MzUzNTc3JTNhbG9jLTkwJTdjcG10JTdjYiU3Y3BkdiU3Y2MlN2MlMjZnY2xpZCUzZDNjYzI3NWU5YTRlNjE1MzlhNzdiMWQ5YTU3ZmQ0MmYxJTI2Z2Nsc3JjJTNkM3AuZHMlMjYlMjZtc2Nsa2lkJTNkM2NjMjc1ZTlhNGU2MTUzOWE3N2IxZDlhNTdmZDQyZjElMjZ1dG1fc291cmNlJTNkYmluZyUyNnV0bV9tZWRpdW0lM2RjcGMlMjZ1dG1fY2FtcGFpZ24lM2RCX0luZGlhX05vbkJyYW5kX0FJX0NFX0Jyb2FkXyhDUE4tMTExMDY3KV9FTiUyNnV0bV90ZXJtJTNkYXJ0aWZpY2lhbCUyNTIwaW50ZWxsaWdlbmNlJTI1MjBkYXRhJTI2dXRtX2NvbnRlbnQlM2RBSQ&rlid=3cc275e9a4e61539a77b1d9a57fd42f1&vqd=4-87550287223213330323116461630452996529&iurl={1}IG=E4677114845545F3BAFAABDB2B628C00&CID=0C3FBD50865E61982E1CAB7887A6602A&ID=DevEx,5047.1
+  3. https://indianexpress.com/section/technology/artificial-intelligence/
+  4. https://www.newsweek.com/ai
+  5. https://www.pcmag.com/news/categories/ai
+  6. https://www.reuters.com/technology/artificial-intelligence/
+
+RATE LIMITED DOMAINS:
+No domains rate limited
+
+================================================================================
+Generated by Production WebScraperAI v1.1 - FIXED VERSION
+================================================================================
